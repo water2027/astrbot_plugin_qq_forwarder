@@ -43,7 +43,7 @@ class QqForwarder(Star):
         )
 
         plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
-        self._store = CursorStore(plugin_data_path, self.source_group)
+        self._store = CursorStore(plugin_data_path, self.source_group, self.cache_size)
 
         typeRule = TypeRule(self.allowed_msg_types)
         groupRule = GroupRule(self.source_group)
@@ -54,7 +54,7 @@ class QqForwarder(Star):
         self._pre_forward_executor = PreForwardExecutor([timeRule])
         self._forward_lock = asyncio.Lock()
         self._scheduler_task: Optional[asyncio.Task] = None
-        self._bot_client = None  # 首次收到消息时记录，供定时任务使用
+        self._bot_client = None  # 供定时任务使用
 
     # ------------------------------------------------------------------ #
     #  调度器
@@ -119,12 +119,11 @@ class QqForwarder(Star):
 
         msg_id = event.message_obj.message_id
 
+        self.use_bot(event)
+
         if not await self._pre_cache_executor.evaluate(event.message_obj):
             logger.debug(f"[QqForwarder] 消息 {msg_id} 未通过缓存前规则检查，跳过缓存")
             return
-
-        if self._bot_client is None:
-            self._bot_client = event.bot
 
         if self.block_source_messages:
             event.stop_event()
@@ -144,7 +143,7 @@ class QqForwarder(Star):
             yield event.plain_result("别急, 在般了")
             return
 
-        task = asyncio.create_task(self._run_forward())
+        task = asyncio.create_task(self._run_forward(event))
         task.add_done_callback(
             lambda t: (
                 logger.error(f"[QqForwarder] 手动转发任务异常: {t.exception()}")
@@ -158,13 +157,16 @@ class QqForwarder(Star):
     #  转发核心逻辑
     # ------------------------------------------------------------------ #
 
-    async def _run_forward(self):
+    async def _run_forward(self, event: AstrMessageEvent):
         """执行一次完整的转发流程（加锁，防止并发）。
 
         每个源群有独立游标，定时触发时各群独立计算待转发消息。
         缓存是统一队列，转发完成后只清理所有群都已覆盖的部分。
         """
         async with self._forward_lock:
+            if event is not None:
+                self.use_bot(event)
+
             if self._bot_client is None:
                 logger.warning("[QqForwarder] 尚无可用 bot 客户端，跳过转发")
                 return
@@ -244,3 +246,9 @@ class QqForwarder(Star):
                         )
                         await self._store.remove_messages_up_to(min_cursor)
                         logger.info(f"[QqForwarder] 缓存清理至游标 {min_cursor}")
+
+
+    def use_bot(self, event: AstrMessageEvent):
+        assert(isinstance(event, AiocqhttpMessageEvent))
+        if self._bot_client is None:
+            self._bot_client = event.bot
