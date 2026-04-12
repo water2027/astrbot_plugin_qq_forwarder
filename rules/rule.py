@@ -1,13 +1,15 @@
 from astrbot.api.platform import AstrBotMessage
 from aiocqhttp import CQHttp
+from abc import ABC, abstractmethod
 
 
-class PreCacheRule:
+class PreCacheRule(ABC):
     """缓存前规则基类：此时有完整的 message 实体。"""
 
     def __init__(self, rule_name: str):
         self.rule_name = rule_name
 
+    @abstractmethod
     async def evaluate(self, message: AstrBotMessage) -> bool:
         """判断消息是否应该入缓存。
 
@@ -19,12 +21,13 @@ class PreCacheRule:
         """
 
 
-class PreForwardRule:
+class PreForwardRule(ABC):
     """转发前规则基类：此时只有消息 ID，需要通过 bot 查询详情。"""
 
     def __init__(self, rule_name: str):
         self.rule_name = rule_name
 
+    @abstractmethod
     async def evaluate(self, bot: CQHttp, message_id: int) -> bool:
         """判断消息是否应该被转发。
 

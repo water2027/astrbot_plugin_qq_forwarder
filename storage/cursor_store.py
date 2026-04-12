@@ -7,6 +7,7 @@ from typing import List, Optional
 from astrbot.api import logger
 from abc import ABC, abstractmethod
 
+
 class IStore(ABC):
     @abstractmethod
     async def read_cache(self) -> List[dict]:
@@ -19,10 +20,11 @@ class IStore(ABC):
     @abstractmethod
     async def write_cache(self, data: List[dict]):
         pass
-    
+
     @abstractmethod
     async def write_cursors(self, data: dict):
         pass
+
 
 class FileStore(IStore):
     def __init__(self, data_dir: Path, target_groups: List[str]):
@@ -73,6 +75,7 @@ class FileStore(IStore):
     async def write_cursors(self, data: dict):
         with open(self._cursor_file, "w", encoding="utf-8") as f:
             json.dump(data, f)
+
 
 class CursorStore:
     """管理消息缓存队列和各源群游标的持久化存储。

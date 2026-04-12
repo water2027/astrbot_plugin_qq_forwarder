@@ -1,5 +1,4 @@
 import asyncio
-import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,7 +25,7 @@ from .storage.cursor_store import CursorStore, FileStore
 
 @register("qq_forwarder", "water2027", "QQ转发插件", "0.1.0")
 class QqForwarder(Star):
-    def __init__(self, context: Context, config: dict = None):
+    def __init__(self, context: Context, config: dict):
         super().__init__(context)
         config = config or {}
 
@@ -36,7 +35,7 @@ class QqForwarder(Star):
         self.cache_max_age: int = config.get("cache_max_age", 3600)
         self.cache_size: int = config.get("cache_size", 10)
         self.source_group: List[str] = [str(g) for g in config.get("source_group", [])]
-        self.target_group: List[int] = [int(g) for g in config.get("target_group", [])]
+        self.target_group: List[str] = [str(g) for g in config.get("target_group", [])]
         self.block_source_messages: bool = config.get("block_source_messages", True)
         self.allowed_msg_types: List[str] = config.get(
             "allowed_message_types", ["text", "image", "video", "forward"]
@@ -99,7 +98,9 @@ class QqForwarder(Star):
                 logger.info(f"[QqForwarder] 距下次定时转发 {seconds:.0f} 秒")
                 await asyncio.sleep(seconds)
                 if not self._forward_lock.locked():
-                    task = asyncio.create_task(self._run_forward(targets=[str(g) for g in self.target_group]))
+                    task = asyncio.create_task(
+                        self._run_forward(targets=self.target_group)
+                    )
                     task.add_done_callback(
                         lambda t: (
                             logger.error(f"[QqForwarder] 转发任务异常: {t.exception()}")
@@ -145,7 +146,7 @@ class QqForwarder(Star):
             return
 
         self.use_bot(event)
-        target_group_id = str(event.message_obj.group_id)
+        target_group_id = event.message_obj.group_id
         task = asyncio.create_task(self._run_forward(targets=[target_group_id]))
         task.add_done_callback(
             lambda t: (
@@ -200,9 +201,13 @@ class QqForwarder(Star):
                             group_id=int(group_id),
                             message_id=msg_id,
                         )
-                        logger.info(f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 成功")
+                        logger.info(
+                            f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 成功"
+                        )
                     except ActionFailed as e:
-                        logger.error(f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 失败: {e}")
+                        logger.error(
+                            f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 失败: {e}"
+                        )
                         all_success = False
 
                     if not all_success:
@@ -224,7 +229,7 @@ class QqForwarder(Star):
             # 只有全部目标群都有游标时才清理，取位置最靠前的游标作为清理边界
             if group_last_forwarded:
                 all_cursors = []
-                for group_id in [str(g) for g in self.target_group]:
+                for group_id in self.target_group:
                     c = await self._store.get_cursor(group_id)
                     if c is not None:
                         all_cursors.append(c)
@@ -233,12 +238,13 @@ class QqForwarder(Star):
                     cache_ids = await self._store.get_all_msg_ids()
                     valid_cursors = [c for c in all_cursors if c in cache_ids]
                     if valid_cursors:
-                        min_cursor = min(valid_cursors, key=lambda c: cache_ids.index(c))
+                        min_cursor = min(
+                            valid_cursors, key=lambda c: cache_ids.index(c)
+                        )
                         await self._store.remove_messages_up_to(min_cursor)
                         logger.info(f"[QqForwarder] 缓存清理至游标 {min_cursor}")
 
-
     def use_bot(self, event: AstrMessageEvent):
-        assert(isinstance(event, AiocqhttpMessageEvent))
+        assert isinstance(event, AiocqhttpMessageEvent)
         if self._bot_client is None:
             self._bot_client = event.bot

@@ -21,6 +21,11 @@ class TypeRule(PreCacheRule):
         found_types = set()
         if isinstance(message.raw_message, Event):
             msg = message.raw_message.raw_message
+            if msg is None:
+                logger.warning(
+                    f"[QqForwarder] TypeRule 消息 {message.message_id} raw_message 为空，拒绝"
+                )
+                return False
             if "[CQ:image" in msg:
                 found_types.add("image")
             if "[CQ:video" in msg:
@@ -46,7 +51,7 @@ class TypeRule(PreCacheRule):
 
 
 class GroupRule(PreCacheRule):
-    def __init__(self, allowed_source: list[int]):
+    def __init__(self, allowed_source: list[str]):
         super().__init__("GroupRule")
         self.allowed_source = allowed_source
 
