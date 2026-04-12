@@ -43,7 +43,7 @@ class QqForwarder(Star):
         )
 
         plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
-        self._store = CursorStore(plugin_data_path)
+        self._store = CursorStore(plugin_data_path, self.source_group)
 
         typeRule = TypeRule(self.allowed_msg_types)
         groupRule = GroupRule(self.source_group)

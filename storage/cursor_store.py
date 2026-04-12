@@ -17,19 +17,35 @@ class CursorStore:
         {"群号字符串": 最后转发的msg_id整数, ...}
     """
 
-    def __init__(self, data_dir: Path, capacity: int = 10):
+    def __init__(self, data_dir: Path, source_groups: List[str], capacity: int = 10):
         data_dir.mkdir(parents=True, exist_ok=True)
         self.capacity = capacity
         self._cache_file = data_dir / "cache.json"
         self._cursor_file = data_dir / "cursor.json"
         self._lock = asyncio.Lock()
-        self._ensure_files()
+        self._ensure_files(source_groups)
 
-    def _ensure_files(self):
-        for path, default in [(self._cache_file, []), (self._cursor_file, {})]:
-            if not path.exists():
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(default, f)
+    def _ensure_files(self, source_groups: List[str]):
+        if not self._cache_file.exists():
+            with open(self._cache_file, "w", encoding="utf-8") as f:
+                json.dump([], f)
+
+        # 读取已有游标，补全 source_groups 中缺失的键（初始值为 null）
+        try:
+            with open(self._cursor_file, "r", encoding="utf-8") as f:
+                cursors = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            cursors = {}
+
+        updated = False
+        for group_id in source_groups:
+            if group_id not in cursors:
+                cursors[group_id] = None
+                updated = True
+
+        if updated or not self._cursor_file.exists():
+            with open(self._cursor_file, "w", encoding="utf-8") as f:
+                json.dump(cursors, f)
 
     def _read_cache(self) -> List[dict]:
         try:
