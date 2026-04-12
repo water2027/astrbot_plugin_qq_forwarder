@@ -123,6 +123,12 @@ class CursorStore:
             idx = msg_ids.index(msg_id)
             self._write_cache(cache[idx + 1:])
 
+    async def get_all_msg_ids(self) -> List[int]:
+        """返回缓存队列中所有消息ID的有序列表。"""
+        async with self._lock:
+            cache = self._read_cache()
+            return [e["msg_id"] for e in cache]
+
     async def clear_cache(self):
         """清空缓存队列（所有源群处理完毕后调用）。"""
         async with self._lock:
