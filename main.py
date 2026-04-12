@@ -14,7 +14,7 @@ from aiocqhttp.exceptions import ActionFailed
 
 from .config import PLUGIN_NAME
 from .rules.rule import TypeRule
-from .rules.executor import RuleExecutor
+from .rules.executor import PreCacheExecutor, PreForwardExecutor
 from .storage.cursor_store import CursorStore
 
 
@@ -36,73 +36,11 @@ class QqForwarder(Star):
 
         plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
         self._store = CursorStore(plugin_data_path)
-        self._executor = RuleExecutor([TypeRule(self.allowed_msg_types)])
+        self._pre_cache_executor = PreCacheExecutor([])
+        self._pre_forward_executor = PreForwardExecutor([TypeRule(self.allowed_msg_types)])
         self._forward_lock = asyncio.Lock()
         self._scheduler_task: Optional[asyncio.Task] = None
         self._bot_client = None  # 首次收到消息时记录，供定时任务使用
-
-    # ------------------------------------------------------------------ #
-    #  消息类型过滤（支持 dict / Component / str 三种格式）
-    # ------------------------------------------------------------------ #
-
-    def _is_allowed_msg_type(self, message) -> bool:
-        """判断消息是否包含允许的消息类型。
-
-        规则：
-        1. 若消息含有未授权的核心媒体类型（image/video/forward），拒绝整条消息。
-        2. 若消息没有任何符合授权的元素，拒绝。
-        """
-        if not self.allowed_msg_types:
-            return False
-
-        allowed = set(self.allowed_msg_types)
-        found_types: set = set()
-
-        if isinstance(message, list):
-            for seg in message:
-                if isinstance(seg, dict):
-                    mtype = seg.get("type", "")
-                    if mtype == "image":
-                        found_types.add("image")
-                    elif mtype == "video":
-                        found_types.add("video")
-                    elif mtype in ["forward", "node"]:
-                        found_types.add("forward")
-                    elif mtype in ["text", "face", "at", "reply"]:
-                        if mtype == "text" and not seg.get("data", {}).get("text", "").strip():
-                            continue
-                        found_types.add("text")
-                else:
-                    cname = seg.__class__.__name__.lower()
-                    if cname == "image":
-                        found_types.add("image")
-                    elif cname == "video":
-                        found_types.add("video")
-                    elif cname in ["forward", "node"]:
-                        found_types.add("forward")
-                    elif cname in ["plain", "text", "face", "at", "reply"]:
-                        if cname in ["plain", "text"] and not getattr(seg, "text", "").strip():
-                            continue
-                        found_types.add("text")
-        elif isinstance(message, str):
-            if "[CQ:image" in message:
-                found_types.add("image")
-            if "[CQ:video" in message:
-                found_types.add("video")
-            if "[CQ:forward" in message or "[CQ:node" in message:
-                found_types.add("forward")
-            text_only = re.sub(r"\[CQ:.*?\]", "", message).strip()
-            if text_only:
-                found_types.add("text")
-
-        for t in ["image", "video", "forward"]:
-            if t in found_types and t not in allowed:
-                return False
-
-        if not found_types.intersection(allowed):
-            return False
-
-        return True
 
     # ------------------------------------------------------------------ #
     #  调度器
@@ -238,7 +176,7 @@ class QqForwarder(Star):
 
                 last_forwarded: Optional[int] = None
                 for msg_id in pending:
-                    if not await self._executor.evaluate(self._bot_client, msg_id):
+                    if not await self._pre_forward_executor.evaluate(self._bot_client, msg_id):
                         logger.info(f"[QqForwarder] 消息 {msg_id} 未通过规则检查，跳过")
                         continue
 
