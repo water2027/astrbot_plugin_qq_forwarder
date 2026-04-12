@@ -209,44 +209,52 @@ class QqForwarder(Star):
         async with self._forward_lock:
             await self._store.cleanup(self.cache_max_age, self.cache_size)
 
-            forwarded_any = False
-            for group_id in self.source_group:
-                cursor = await self._store.get_cursor(group_id)
-                pending = await self._store.get_pending(group_id, cursor)
+            last_forwarded: Optional[int] = None
 
-                if not pending:
-                    logger.info(f"[QqForwarder] 源群 {group_id} 无待转发消息")
-                    continue
+            # 所有源群共享缓存，游标取所有源群中最小（最旧）的游标
+            # 实际上缓存是统一队列，只需取任意一个游标（第一个源群）作为起点
+            # 注意：如有多个源群，游标应取"已转发最少"的那个，这里简化为第一个源群的游标
+            cursor = None
+            if self.source_group:
+                cursor = await self._store.get_cursor(self.source_group[0])
 
-                logger.info(
-                    f"[QqForwarder] 源群 {group_id} 待转发 {len(pending)} 条，游标={cursor}"
-                )
+            pending = await self._store.get_pending(self.source_group[0] if self.source_group else "", cursor)
 
-                last_forwarded: Optional[int] = None
-                for msg_id in pending:
-                    if self._bot_client is None:
-                        logger.warning("[QqForwarder] 尚无可用 bot 客户端，跳过转发")
-                        return
-                    for target_id in self.target_group:
-                        try:
-                            await self._bot_client.api.call_action(
-                                "forward_group_single_msg",
-                                group_id=target_id,
-                                message_id=msg_id,
-                            )
-                            logger.info(
-                                f"[QqForwarder] 消息 {msg_id} -> 群 {target_id} 成功"
-                            )
-                        except ActionFailed as e:
-                            logger.error(
-                                f"[QqForwarder] 消息 {msg_id} -> 群 {target_id} 失败: {e}"
-                            )
-                    last_forwarded = msg_id
+            if not pending:
+                logger.info("[QqForwarder] 无待转发消息")
+                return
 
-                if last_forwarded is not None:
+            logger.info(f"[QqForwarder] 待转发 {len(pending)} 条，游标={cursor}")
+
+            for msg_id in pending:
+                if self._bot_client is None:
+                    logger.warning("[QqForwarder] 尚无可用 bot 客户端，跳过转发")
+                    return
+
+                all_success = True
+                for target_id in self.target_group:
+                    try:
+                        await self._bot_client.api.call_action(
+                            "forward_group_single_msg",
+                            group_id=target_id,
+                            message_id=msg_id,
+                        )
+                        logger.info(f"[QqForwarder] 消息 {msg_id} -> 群 {target_id} 成功")
+                    except ActionFailed as e:
+                        logger.error(f"[QqForwarder] 消息 {msg_id} -> 群 {target_id} 失败: {e}")
+                        all_success = False
+
+                if not all_success:
+                    logger.warning(f"[QqForwarder] 消息 {msg_id} 转发不完整，停止本次转发")
+                    break
+
+                last_forwarded = msg_id
+
+            if last_forwarded is not None:
+                # 更新所有源群的游标（共享缓存，游标统一）
+                for group_id in self.source_group:
                     await self._store.update_cursor(group_id, last_forwarded)
-                    forwarded_any = True
-
-            if forwarded_any:
-                await self._store.clear_cache()
-                logger.info("[QqForwarder] 本次转发完成，缓存已清空")
+                await self._store.remove_messages_up_to(last_forwarded)
+                logger.info(f"[QqForwarder] 本次转发完成，游标更新至 {last_forwarded}")
+            else:
+                logger.info("[QqForwarder] 本次转发无成功消息")

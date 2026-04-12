@@ -110,6 +110,19 @@ class CursorStore:
             cursors = self._read_cursors()
             return cursors.get(group_id)
 
+    async def remove_messages_up_to(self, msg_id: int):
+        """从缓存队列头部删除直到（含）msg_id 的所有条目。
+
+        用于只清理已成功转发的消息，保留失败及之后的消息。
+        """
+        async with self._lock:
+            cache = self._read_cache()
+            msg_ids = [e["msg_id"] for e in cache]
+            if msg_id not in msg_ids:
+                return
+            idx = msg_ids.index(msg_id)
+            self._write_cache(cache[idx + 1:])
+
     async def clear_cache(self):
         """清空缓存队列（所有源群处理完毕后调用）。"""
         async with self._lock:
