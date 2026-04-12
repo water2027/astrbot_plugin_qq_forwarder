@@ -21,7 +21,7 @@ from .config import PLUGIN_NAME
 from .rules.pre_cache import GroupRule, IdRule, TypeRule
 from .rules.executor import PreCacheExecutor, PreForwardExecutor
 from .rules.pre_forward import TimeRule
-from .storage.cursor_store import CursorStore
+from .storage.cursor_store import CursorStore, FileStore
 
 
 @register("qq_forwarder", "water2027", "QQ转发插件", "0.1.0")
@@ -43,7 +43,8 @@ class QqForwarder(Star):
         )
 
         plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
-        self._store = CursorStore(plugin_data_path, self.target_group, self.cache_size)
+        file_store = FileStore(plugin_data_path, self.target_group)
+        self._store = CursorStore(file_store, self.cache_size)
 
         typeRule = TypeRule(self.allowed_msg_types)
         groupRule = GroupRule(self.source_group)
