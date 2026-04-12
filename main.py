@@ -279,10 +279,8 @@ class QqForwarder(Star):
                     # 所有群都有游标，找位置最靠前（值最小，在缓存中index最小）的游标
                     # 该游标之前的消息所有群都已转发过，可以安全删除
                     cache_ids = await self._store.get_all_msg_ids()
-                    min_cursor = min(
-                        all_cursors,
-                        key=lambda c: cache_ids.index(c) if c in cache_ids else -1
-                    )
-                    if min_cursor in cache_ids:
+                    valid_cursors = [c for c in all_cursors if c in cache_ids]
+                    if len(valid_cursors) == len(self.source_group):
+                        min_cursor = min(valid_cursors, key=lambda c: cache_ids.index(c))
                         await self._store.remove_messages_up_to(min_cursor)
                         logger.info(f"[QqForwarder] 缓存清理至游标 {min_cursor}")
