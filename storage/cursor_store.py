@@ -17,8 +17,9 @@ class CursorStore:
         {"群号字符串": 最后转发的msg_id整数, ...}
     """
 
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, capacity: int = 10):
         data_dir.mkdir(parents=True, exist_ok=True)
+        self.capacity = capacity
         self._cache_file = data_dir / "cache.json"
         self._cursor_file = data_dir / "cursor.json"
         self._lock = asyncio.Lock()
@@ -56,26 +57,9 @@ class CursorStore:
         """追加一条消息到缓存队列末尾。"""
         async with self._lock:
             cache = self._read_cache()
+            if len(cache) >= self.capacity:
+                cache.pop(0)  # 超过容量时删除最旧的条目
             cache.append({"msg_id": msg_id, "timestamp": timestamp})
-            self._write_cache(cache)
-
-    async def cleanup(self, max_age: int, max_size: int):
-        """清理过期和超量的缓存条目。
-
-        先按 max_age 删除过期条目，再按 max_size 从最旧端截断（max_size=0 不限制）。
-        """
-        async with self._lock:
-            cache = self._read_cache()
-            now = time.time()
-
-            # 清理过期
-            if max_age > 0:
-                cache = [e for e in cache if now - e["timestamp"] <= max_age]
-
-            # 清理超量（保留最新的 max_size 条）
-            if max_size > 0 and len(cache) > max_size:
-                cache = cache[-max_size:]
-
             self._write_cache(cache)
 
     async def get_pending(self, group_id: str, cursor: Optional[int]) -> List[int]:

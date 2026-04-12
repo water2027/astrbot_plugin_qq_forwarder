@@ -151,8 +151,6 @@ class QqForwarder(Star):
         缓存是统一队列，转发完成后只清理所有群都已覆盖的部分。
         """
         async with self._forward_lock:
-            await self._store.cleanup(self.cache_max_age, self.cache_size)
-
             if self._bot_client is None:
                 logger.warning("[QqForwarder] 尚无可用 bot 客户端，跳过转发")
                 return
