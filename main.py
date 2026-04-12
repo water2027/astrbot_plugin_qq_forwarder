@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
+
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
@@ -12,9 +14,11 @@ from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from aiocqhttp.exceptions import ActionFailed
 
+
 from .config import PLUGIN_NAME
-from .rules.rule import TypeRule
+from .rules.pre_cache import GroupRule, IdRule, TypeRule
 from .rules.executor import PreCacheExecutor, PreForwardExecutor
+from .rules.pre_forward import TimeRule
 from .storage.cursor_store import CursorStore
 
 
@@ -36,8 +40,14 @@ class QqForwarder(Star):
 
         plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
         self._store = CursorStore(plugin_data_path)
-        self._pre_cache_executor = PreCacheExecutor([])
-        self._pre_forward_executor = PreForwardExecutor([TypeRule(self.allowed_msg_types)])
+
+        typeRule = TypeRule(self.allowed_msg_types)
+        groupRule = GroupRule(self.source_group)
+        idRule = IdRule()
+        self._pre_cache_executor = PreCacheExecutor([typeRule, groupRule, idRule])
+
+        timeRule = TimeRule(self.cache_max_age)
+        self._pre_forward_executor = PreForwardExecutor([timeRule])
         self._forward_lock = asyncio.Lock()
         self._scheduler_task: Optional[asyncio.Task] = None
         self._bot_client = None  # 首次收到消息时记录，供定时任务使用
@@ -97,8 +107,12 @@ class QqForwarder(Star):
 
     @filter.platform_adapter_type(PlatformAdapterType.AIOCQHTTP)
     async def handle_message(self, event: AstrMessageEvent):
-        source_group_id = str(event.message_obj.group_id)
-        if source_group_id not in self.source_group:
+        assert isinstance(event, AiocqhttpMessageEvent)
+
+        msg_id = event.message_obj.message_id
+
+        if not await self._pre_cache_executor.evaluate(event.message_obj):
+            logger.debug(f"[QqForwarder] 消息 {msg_id} 未通过缓存前规则检查，跳过缓存")
             return
 
         if self._bot_client is None:
@@ -107,24 +121,8 @@ class QqForwarder(Star):
         if self.block_source_messages:
             event.stop_event()
 
-        msg_id = event.message_obj.message_id
-        raw_msg = getattr(
-            event.message_obj, "message",
-            getattr(event.message_obj, "raw_message", "")
-        )
-
-        if not self._is_allowed_msg_type(raw_msg):
-            logger.debug(f"[QqForwarder] 消息 {msg_id} 类型不允许，跳过缓存")
-            return
-
-        try:
-            int(msg_id)
-        except (ValueError, TypeError):
-            logger.warning(f"[QqForwarder] 消息 ID {msg_id} 非数字，跳过")
-            return
-
         await self._store.add_message(int(msg_id), time.time())
-        logger.info(f"[QqForwarder] 缓存消息 {msg_id}（源群 {source_group_id}）")
+        logger.info(f"[QqForwarder] 缓存消息 {msg_id}（源群 {event.message_obj.group_id}）")
 
     # ------------------------------------------------------------------ #
     #  手动命令

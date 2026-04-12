@@ -1,5 +1,5 @@
-from astrbot.api import logger
-
+from astrbot.api.platform import AstrBotMessage
+from aiocqhttp import CQHttp
 
 class PreCacheRule:
     """缓存前规则基类：此时有完整的 message 实体。"""
@@ -7,7 +7,7 @@ class PreCacheRule:
     def __init__(self, rule_name: str):
         self.rule_name = rule_name
 
-    async def evaluate(self, message) -> bool:
+    async def evaluate(self, message: AstrBotMessage) -> bool:
         """判断消息是否应该入缓存。
 
         Args:
@@ -24,7 +24,7 @@ class PreForwardRule:
     def __init__(self, rule_name: str):
         self.rule_name = rule_name
 
-    async def evaluate(self, bot, message_id: int) -> bool:
+    async def evaluate(self, bot: CQHttp, message_id: int) -> bool:
         """判断消息是否应该被转发。
 
         Args:
@@ -35,19 +35,3 @@ class PreForwardRule:
             bool: True 表示允许转发
         """
 
-
-class TypeRule(PreForwardRule):
-    def __init__(self, allowed_types: list[str]):
-        super().__init__("TypeRule")
-        self.allowed_types = allowed_types
-
-    async def evaluate(self, bot, message_id: int) -> bool:
-        if not self.allowed_types:
-            return False
-        ret = await bot.api.call_action("get_msg", message_id=message_id)
-        messages = ret.get("message", [])
-        for msg in messages:
-            if msg.get("type") not in self.allowed_types:
-                logger.info(f"[QqForwarder] 消息 {message_id} 包含不允许的消息类型 {msg.get('type')}")
-                return False
-        return True

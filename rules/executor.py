@@ -1,4 +1,6 @@
 from .rule import PreCacheRule, PreForwardRule
+from astrbot.api.platform import AstrBotMessage
+from aiocqhttp import CQHttp
 
 
 class PreCacheExecutor:
@@ -10,7 +12,7 @@ class PreCacheExecutor:
     def add_rule(self, rule: PreCacheRule):
         self.rules.append(rule)
 
-    async def evaluate(self, message) -> bool:
+    async def evaluate(self, message: AstrBotMessage) -> bool:
         for rule in self.rules:
             if not await rule.evaluate(message):
                 return False
@@ -26,7 +28,7 @@ class PreForwardExecutor:
     def add_rule(self, rule: PreForwardRule):
         self.rules.append(rule)
 
-    async def evaluate(self, bot, message_id: int) -> bool:
+    async def evaluate(self, bot: CQHttp, message_id: int) -> bool:
         for rule in self.rules:
             if not await rule.evaluate(bot, message_id):
                 return False
