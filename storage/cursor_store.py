@@ -80,7 +80,7 @@ class CursorStore:
                 return msg_ids
 
             idx = msg_ids.index(cursor)
-            return msg_ids[idx + 1:]
+            return msg_ids[idx + 1 :]
 
     async def update_cursor(self, group_id: str, msg_id: int):
         """更新指定源群的游标为 msg_id。"""
@@ -106,7 +106,7 @@ class CursorStore:
             if msg_id not in msg_ids:
                 return
             idx = msg_ids.index(msg_id)
-            self._write_cache(cache[idx + 1:])
+            self._write_cache(cache[idx + 1 :])
 
     async def get_all_msg_ids(self) -> List[int]:
         """返回缓存队列中所有消息ID的有序列表。"""

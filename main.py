@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import List, Optional
 
 
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
@@ -28,7 +30,9 @@ class QqForwarder(Star):
         super().__init__(context)
         config = config or {}
 
-        self.forward_at: List[str] = config.get("forward_at", ["09:00", "12:00", "18:00"])
+        self.forward_at: List[str] = config.get(
+            "forward_at", ["09:00", "12:00", "18:00"]
+        )
         self.cache_max_age: int = config.get("cache_max_age", 3600)
         self.cache_size: int = config.get("cache_size", 10)
         self.source_group: List[str] = [str(g) for g in config.get("source_group", [])]
@@ -96,7 +100,11 @@ class QqForwarder(Star):
                 if not self._forward_lock.locked():
                     task = asyncio.create_task(self._run_forward())
                     task.add_done_callback(
-                        lambda t: logger.error(f"[QqForwarder] 转发任务异常: {t.exception()}") if not t.cancelled() and t.exception() else None
+                        lambda t: (
+                            logger.error(f"[QqForwarder] 转发任务异常: {t.exception()}")
+                            if not t.cancelled() and t.exception()
+                            else None
+                        )
                     )
         except asyncio.CancelledError:
             raise
@@ -122,7 +130,9 @@ class QqForwarder(Star):
             event.stop_event()
 
         await self._store.add_message(int(msg_id), time.time())
-        logger.info(f"[QqForwarder] 缓存消息 {msg_id}（源群 {event.message_obj.group_id}）")
+        logger.info(
+            f"[QqForwarder] 缓存消息 {msg_id}（源群 {event.message_obj.group_id}）"
+        )
 
     # ------------------------------------------------------------------ #
     #  手动命令
@@ -136,7 +146,11 @@ class QqForwarder(Star):
 
         task = asyncio.create_task(self._run_forward())
         task.add_done_callback(
-            lambda t: logger.error(f"[QqForwarder] 手动转发任务异常: {t.exception()}") if not t.cancelled() and t.exception() else None
+            lambda t: (
+                logger.error(f"[QqForwarder] 手动转发任务异常: {t.exception()}")
+                if not t.cancelled() and t.exception()
+                else None
+            )
         )
         yield event.plain_result("别急")
 
@@ -172,7 +186,9 @@ class QqForwarder(Star):
 
                 last_forwarded: Optional[int] = None
                 for msg_id in pending:
-                    if not await self._pre_forward_executor.evaluate(self._bot_client, msg_id):
+                    if not await self._pre_forward_executor.evaluate(
+                        self._bot_client, msg_id
+                    ):
                         logger.info(f"[QqForwarder] 消息 {msg_id} 未通过规则检查，跳过")
                         continue
 
@@ -223,6 +239,8 @@ class QqForwarder(Star):
                     cache_ids = await self._store.get_all_msg_ids()
                     valid_cursors = [c for c in all_cursors if c in cache_ids]
                     if len(valid_cursors) == len(self.source_group):
-                        min_cursor = min(valid_cursors, key=lambda c: cache_ids.index(c))
+                        min_cursor = min(
+                            valid_cursors, key=lambda c: cache_ids.index(c)
+                        )
                         await self._store.remove_messages_up_to(min_cursor)
                         logger.info(f"[QqForwarder] 缓存清理至游标 {min_cursor}")

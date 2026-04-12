@@ -1,6 +1,7 @@
 from astrbot.api.platform import AstrBotMessage
 from aiocqhttp import CQHttp
 
+
 class PreCacheRule:
     """缓存前规则基类：此时有完整的 message 实体。"""
 
@@ -34,4 +35,3 @@ class PreForwardRule:
         Returns:
             bool: True 表示允许转发
         """
-
