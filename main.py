@@ -43,7 +43,7 @@ class QqForwarder(Star):
         )
 
         plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
-        self._store = CursorStore(plugin_data_path, self.source_group, self.cache_size)
+        self._store = CursorStore(plugin_data_path, self.target_group, self.cache_size)
 
         typeRule = TypeRule(self.allowed_msg_types)
         groupRule = GroupRule(self.source_group)
@@ -98,7 +98,7 @@ class QqForwarder(Star):
                 logger.info(f"[QqForwarder] 距下次定时转发 {seconds:.0f} 秒")
                 await asyncio.sleep(seconds)
                 if not self._forward_lock.locked():
-                    task = asyncio.create_task(self._run_forward())
+                    task = asyncio.create_task(self._run_forward(target_group_id=None))
                     task.add_done_callback(
                         lambda t: (
                             logger.error(f"[QqForwarder] 转发任务异常: {t.exception()}")
@@ -143,7 +143,9 @@ class QqForwarder(Star):
             yield event.plain_result("别急, 在般了")
             return
 
-        task = asyncio.create_task(self._run_forward(event))
+        self.use_bot(event)
+        target_group_id = str(event.message_obj.group_id)
+        task = asyncio.create_task(self._run_forward(target_group_id=target_group_id))
         task.add_done_callback(
             lambda t: (
                 logger.error(f"[QqForwarder] 手动转发任务异常: {t.exception()}")
@@ -157,24 +159,26 @@ class QqForwarder(Star):
     #  转发核心逻辑
     # ------------------------------------------------------------------ #
 
-    async def _run_forward(self, event: AstrMessageEvent):
+    async def _run_forward(self, target_group_id: Optional[str] = None):
         """执行一次完整的转发流程（加锁，防止并发）。
 
-        每个源群有独立游标，定时触发时各群独立计算待转发消息。
-        缓存是统一队列，转发完成后只清理所有群都已覆盖的部分。
+        target_group_id: 指定时只推送给该目标群（手动命令），为 None 时推送给所有目标群（定时任务）。
         """
         async with self._forward_lock:
-            if event is not None:
-                self.use_bot(event)
-
             if self._bot_client is None:
                 logger.warning("[QqForwarder] 尚无可用 bot 客户端，跳过转发")
                 return
 
-            # 记录每个源群本次成功转发到的最后一条消息ID
+            targets = (
+                [target_group_id]
+                if target_group_id is not None
+                else [str(g) for g in self.target_group]
+            )
+
+            # 记录每个目标群本次成功转发到的最后一条消息ID
             group_last_forwarded: dict = {}
 
-            for group_id in self.source_group:
+            for group_id in targets:
                 cursor = await self._store.get_cursor(group_id)
                 pending = await self._store.get_pending(group_id, cursor)
 
@@ -195,21 +199,16 @@ class QqForwarder(Star):
                         continue
 
                     all_success = True
-                    for target_id in self.target_group:
-                        try:
-                            await self._bot_client.api.call_action(
-                                "forward_group_single_msg",
-                                group_id=target_id,
-                                message_id=msg_id,
-                            )
-                            logger.info(
-                                f"[QqForwarder] 消息 {msg_id} -> 群 {target_id} 成功"
-                            )
-                        except ActionFailed as e:
-                            logger.error(
-                                f"[QqForwarder] 消息 {msg_id} -> 群 {target_id} 失败: {e}"
-                            )
-                            all_success = False
+                    try:
+                        await self._bot_client.api.call_action(
+                            "forward_group_single_msg",
+                            group_id=int(group_id),
+                            message_id=msg_id,
+                        )
+                        logger.info(f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 成功")
+                    except ActionFailed as e:
+                        logger.error(f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 失败: {e}")
+                        all_success = False
 
                     if not all_success:
                         logger.warning(
@@ -223,24 +222,24 @@ class QqForwarder(Star):
                     await self._store.update_cursor(group_id, last_forwarded)
                     group_last_forwarded[group_id] = last_forwarded
                     logger.info(
-                        f"[QqForwarder] 源群 {group_id} 游标更新至 {last_forwarded}"
+                        f"[QqForwarder] 目标群 {group_id} 游标更新至 {last_forwarded}"
                     )
 
             # 清理所有群都已转发过的消息（取所有群游标中位置最靠前的）
             if group_last_forwarded:
                 # 读取所有群的最新游标（含本次未更新的群）
                 all_cursors = []
-                for group_id in self.source_group:
+                for group_id in self.target_group:
                     c = await self._store.get_cursor(group_id)
                     if c is not None:
                         all_cursors.append(c)
 
-                if len(all_cursors) == len(self.source_group):
+                if len(all_cursors) == len(self.target_group):
                     # 所有群都有游标，找位置最靠前（值最小，在缓存中index最小）的游标
                     # 该游标之前的消息所有群都已转发过，可以安全删除
                     cache_ids = await self._store.get_all_msg_ids()
                     valid_cursors = [c for c in all_cursors if c in cache_ids]
-                    if len(valid_cursors) == len(self.source_group):
+                    if len(valid_cursors) == len(self.target_group):
                         min_cursor = min(
                             valid_cursors, key=lambda c: cache_ids.index(c)
                         )
