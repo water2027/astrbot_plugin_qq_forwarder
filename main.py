@@ -7,9 +7,6 @@ from typing import List, Optional
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
-    AiocqhttpMessageEvent,
-)
 from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from aiocqhttp.exceptions import ActionFailed
 
