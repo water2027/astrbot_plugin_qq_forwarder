@@ -69,7 +69,8 @@ class CursorStore:
             now = time.time()
 
             # 清理过期
-            cache = [e for e in cache if now - e["timestamp"] <= max_age]
+            if max_age > 0:
+                cache = [e for e in cache if now - e["timestamp"] <= max_age]
 
             # 清理超量（保留最新的 max_size 条）
             if max_size > 0 and len(cache) > max_size:
