@@ -98,7 +98,7 @@ class QqForwarder(Star):
                 logger.info(f"[QqForwarder] 距下次定时转发 {seconds:.0f} 秒")
                 await asyncio.sleep(seconds)
                 if not self._forward_lock.locked():
-                    task = asyncio.create_task(self._run_forward(target_group_id=None))
+                    task = asyncio.create_task(self._run_forward(targets=[str(g) for g in self.target_group]))
                     task.add_done_callback(
                         lambda t: (
                             logger.error(f"[QqForwarder] 转发任务异常: {t.exception()}")
@@ -145,7 +145,7 @@ class QqForwarder(Star):
 
         self.use_bot(event)
         target_group_id = str(event.message_obj.group_id)
-        task = asyncio.create_task(self._run_forward(target_group_id=target_group_id))
+        task = asyncio.create_task(self._run_forward(targets=[target_group_id]))
         task.add_done_callback(
             lambda t: (
                 logger.error(f"[QqForwarder] 手动转发任务异常: {t.exception()}")
@@ -159,21 +159,15 @@ class QqForwarder(Star):
     #  转发核心逻辑
     # ------------------------------------------------------------------ #
 
-    async def _run_forward(self, target_group_id: Optional[str] = None):
+    async def _run_forward(self, targets: list[str] = []):
         """执行一次完整的转发流程（加锁，防止并发）。
 
-        target_group_id: 指定时只推送给该目标群（手动命令），为 None 时推送给所有目标群（定时任务）。
+        targets: 目标群列表。
         """
         async with self._forward_lock:
             if self._bot_client is None:
                 logger.warning("[QqForwarder] 尚无可用 bot 客户端，跳过转发")
                 return
-
-            targets = (
-                [target_group_id]
-                if target_group_id is not None
-                else [str(g) for g in self.target_group]
-            )
 
             # 记录每个目标群本次成功转发到的最后一条消息ID
             group_last_forwarded: dict = {}
@@ -225,24 +219,20 @@ class QqForwarder(Star):
                         f"[QqForwarder] 目标群 {group_id} 游标更新至 {last_forwarded}"
                     )
 
-            # 清理所有群都已转发过的消息（取所有群游标中位置最靠前的）
+            # 清理所有目标群都已转发过的消息
+            # 只有全部目标群都有游标时才清理，取位置最靠前的游标作为清理边界
             if group_last_forwarded:
-                # 读取所有群的最新游标（含本次未更新的群）
                 all_cursors = []
-                for group_id in self.target_group:
+                for group_id in [str(g) for g in self.target_group]:
                     c = await self._store.get_cursor(group_id)
                     if c is not None:
                         all_cursors.append(c)
 
                 if len(all_cursors) == len(self.target_group):
-                    # 所有群都有游标，找位置最靠前（值最小，在缓存中index最小）的游标
-                    # 该游标之前的消息所有群都已转发过，可以安全删除
                     cache_ids = await self._store.get_all_msg_ids()
                     valid_cursors = [c for c in all_cursors if c in cache_ids]
-                    if len(valid_cursors) == len(self.target_group):
-                        min_cursor = min(
-                            valid_cursors, key=lambda c: cache_ids.index(c)
-                        )
+                    if valid_cursors:
+                        min_cursor = min(valid_cursors, key=lambda c: cache_ids.index(c))
                         await self._store.remove_messages_up_to(min_cursor)
                         logger.info(f"[QqForwarder] 缓存清理至游标 {min_cursor}")
 
