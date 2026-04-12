@@ -1,0 +1,40 @@
+{
+  "forward_at": {
+    "type": "list",
+    "default": ["09:00", "12:00", "18:00"],
+    "description": "转发时间点列表, 格式: HH:MM, 24小时制"
+  },
+  "cache_max_age": {
+    "type": "int",
+    "default": 3600,
+    "description": "消息缓存最大有效时长（秒），超出此时长的消息在转发前会被清理"
+  },
+  "cache_size": {
+    "type": "int",
+    "default": 10,
+    "description": "缓存队列最大条数，超出时丢弃最旧的消息，设为 0 表示不限制"
+  },
+  "source_group": {
+    "type": "list",
+    "default": [],
+    "description": "来源群列表"
+  },
+  "target_group": {
+    "type": "list",
+    "default": [],
+    "description": "转发目标群列表"
+  },
+  "block_source_messages": {
+    "type": "bool",
+    "default": true,
+    "description": "是否屏蔽源群消息",
+    "hint": "开启后将屏蔽 source_group 中的群消息，阻止大模型和下游插件响应"
+  },
+  "allowed_message_types": {
+    "type": "list",
+    "default": ["text", "image", "video", "forward"],
+    "description": "允许转发的消息类型",
+    "hint": "可选: text(文本), image(图片), video(视频), forward(聊天记录/合并转发)。消息包含未被允许的媒体类型时整条消息不转发。",
+    "options": ["text", "image", "video", "forward"]
+  }
+}
