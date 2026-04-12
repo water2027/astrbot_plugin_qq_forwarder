@@ -2,14 +2,17 @@ import asyncio
 import re
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from aiocqhttp.exceptions import ActionFailed
 
+from .config import PLUGIN_NAME
 from .storage.cursor_store import CursorStore
 
 
@@ -29,7 +32,8 @@ class QqForwarder(Star):
             "allowed_message_types", ["text", "image", "video", "forward"]
         )
 
-        self._store = CursorStore()
+        plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
+        self._store = CursorStore(plugin_data_path)
         self._forward_lock = asyncio.Lock()
         self._scheduler_task: Optional[asyncio.Task] = None
         self._bot_client = None  # 首次收到消息时记录，供定时任务使用

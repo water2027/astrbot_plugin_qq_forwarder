@@ -2,12 +2,9 @@ import os
 import json
 import time
 import asyncio
+from pathlib import Path
 from typing import List, Optional
 from astrbot.api import logger
-from ..config import DATA_DIR
-
-CACHE_FILE = os.path.join(DATA_DIR, "cache.json")
-CURSOR_FILE = os.path.join(DATA_DIR, "cursor.json")
 
 
 class CursorStore:
@@ -20,36 +17,39 @@ class CursorStore:
         {"群号字符串": 最后转发的msg_id整数, ...}
     """
 
-    def __init__(self):
+    def __init__(self, data_dir: Path):
+        data_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_file = data_dir / "cache.json"
+        self._cursor_file = data_dir / "cursor.json"
         self._lock = asyncio.Lock()
         self._ensure_files()
 
     def _ensure_files(self):
-        for path, default in [(CACHE_FILE, []), (CURSOR_FILE, {})]:
-            if not os.path.exists(path):
+        for path, default in [(self._cache_file, []), (self._cursor_file, {})]:
+            if not path.exists():
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(default, f)
 
     def _read_cache(self) -> List[dict]:
         try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(self._cache_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return []
 
     def _write_cache(self, data: List[dict]):
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        with open(self._cache_file, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
     def _read_cursors(self) -> dict:
         try:
-            with open(CURSOR_FILE, "r", encoding="utf-8") as f:
+            with open(self._cursor_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
 
     def _write_cursors(self, data: dict):
-        with open(CURSOR_FILE, "w", encoding="utf-8") as f:
+        with open(self._cursor_file, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
     async def add_message(self, msg_id: int, timestamp: float):
