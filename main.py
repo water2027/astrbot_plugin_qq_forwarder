@@ -13,6 +13,8 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from aiocqhttp.exceptions import ActionFailed
 
 from .config import PLUGIN_NAME
+from .rules.rule import TypeRule
+from .rules.executor import RuleExecutor
 from .storage.cursor_store import CursorStore
 
 
@@ -34,6 +36,7 @@ class QqForwarder(Star):
 
         plugin_data_path = Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
         self._store = CursorStore(plugin_data_path)
+        self._executor = RuleExecutor([TypeRule(self.allowed_msg_types)])
         self._forward_lock = asyncio.Lock()
         self._scheduler_task: Optional[asyncio.Task] = None
         self._bot_client = None  # 首次收到消息时记录，供定时任务使用
@@ -192,14 +195,14 @@ class QqForwarder(Star):
     @filter.command("来搬")
     async def manual_forward(self, event: AstrMessageEvent):
         if self._forward_lock.locked():
-            yield event.plain_result("转发正在进行中，请稍候。")
+            yield event.plain_result("别急, 在般了")
             return
 
         task = asyncio.create_task(self._run_forward())
         task.add_done_callback(
             lambda t: logger.error(f"[QqForwarder] 手动转发任务异常: {t.exception()}") if not t.cancelled() and t.exception() else None
         )
-        yield event.plain_result("开始转发，完成后不会另行通知。")
+        yield event.plain_result("别急")
 
     # ------------------------------------------------------------------ #
     #  转发核心逻辑
@@ -235,6 +238,10 @@ class QqForwarder(Star):
 
                 last_forwarded: Optional[int] = None
                 for msg_id in pending:
+                    if not await self._executor.evaluate(self._bot_client, msg_id):
+                        logger.info(f"[QqForwarder] 消息 {msg_id} 未通过规则检查，跳过")
+                        continue
+
                     all_success = True
                     for target_id in self.target_group:
                         try:
