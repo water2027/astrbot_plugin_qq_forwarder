@@ -86,16 +86,16 @@ class CursorStore:
         async with self._lock:
             cache = self._read_cache()
 
-        if not cache:
-            return []
+            if not cache:
+                return []
 
-        msg_ids = [e["msg_id"] for e in cache]
+            msg_ids = [e["msg_id"] for e in cache]
 
-        if cursor is None or cursor not in msg_ids:
-            return msg_ids
+            if cursor is None or cursor not in msg_ids:
+                return msg_ids
 
-        idx = msg_ids.index(cursor)
-        return msg_ids[idx + 1:]
+            idx = msg_ids.index(cursor)
+            return msg_ids[idx + 1:]
 
     async def update_cursor(self, group_id: str, msg_id: int):
         """更新指定源群的游标为 msg_id。"""

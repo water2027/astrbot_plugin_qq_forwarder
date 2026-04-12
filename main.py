@@ -1,7 +1,7 @@
 import asyncio
 import re
 import time
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from astrbot.api import logger
@@ -13,7 +13,6 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from aiocqhttp.exceptions import ActionFailed
 
-from .core.forward_manager import ForwardManager
 from .storage.cursor_store import CursorStore
 
 
@@ -130,15 +129,25 @@ class QqForwarder(Star):
     async def terminate(self):
         if self._scheduler_task and not self._scheduler_task.done():
             self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
             logger.info("[QqForwarder] 定时调度器已停止")
 
     async def _scheduler_loop(self):
-        while True:
-            seconds = self._seconds_until_next_forward()
-            logger.info(f"[QqForwarder] 距下次定时转发 {seconds:.0f} 秒")
-            await asyncio.sleep(seconds)
-            if not self._forward_lock.locked():
-                asyncio.create_task(self._run_forward())
+        try:
+            while True:
+                seconds = self._seconds_until_next_forward()
+                logger.info(f"[QqForwarder] 距下次定时转发 {seconds:.0f} 秒")
+                await asyncio.sleep(seconds)
+                if not self._forward_lock.locked():
+                    task = asyncio.create_task(self._run_forward())
+                    task.add_done_callback(
+                        lambda t: logger.error(f"[QqForwarder] 转发任务异常: {t.exception()}") if not t.cancelled() and t.exception() else None
+                    )
+        except asyncio.CancelledError:
+            raise
 
     # ------------------------------------------------------------------ #
     #  事件监听
@@ -185,7 +194,10 @@ class QqForwarder(Star):
             yield event.plain_result("转发正在进行中，请稍候。")
             return
 
-        asyncio.create_task(self._run_forward())
+        task = asyncio.create_task(self._run_forward())
+        task.add_done_callback(
+            lambda t: logger.error(f"[QqForwarder] 手动转发任务异常: {t.exception()}") if not t.cancelled() and t.exception() else None
+        )
         yield event.plain_result("开始转发，完成后不会另行通知。")
 
     # ------------------------------------------------------------------ #
