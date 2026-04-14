@@ -236,10 +236,10 @@ class QqForwarder(Star):
 
                 if len(all_cursors) == len(self.target_group):
                     cache_ids = await self._store.get_all_msg_ids()
-                    valid_cursors = [c for c in all_cursors if c in cache_ids]
-                    if valid_cursors:
+                    # 若任意群的游标不在缓存中，说明该群尚未转发过当前缓存的任何消息，不可清理
+                    if all(c in cache_ids for c in all_cursors):
                         min_cursor = min(
-                            valid_cursors, key=lambda c: cache_ids.index(c)
+                            all_cursors, key=lambda c: cache_ids.index(c)
                         )
                         await self._store.remove_messages_up_to(min_cursor)
                         logger.info(f"[QqForwarder] 缓存清理至游标 {min_cursor}")
