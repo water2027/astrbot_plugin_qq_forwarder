@@ -2,8 +2,10 @@ import asyncio
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
+from pydantic import Field
+from pydantic.dataclasses import dataclass
 
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -11,6 +13,9 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
+from astrbot.core.agent.run_context import ContextWrapper
+from astrbot.core.agent.tool import FunctionTool, ToolExecResult
+from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from aiocqhttp.exceptions import ActionFailed
@@ -21,6 +26,72 @@ from .rules.pre_cache import GroupRule, IdRule, TypeRule
 from .rules.executor import PreCacheExecutor, PreForwardExecutor
 from .rules.pre_forward import TimeRule
 from .storage.cursor_store import CursorStore, FileStore
+
+
+def _get_tool_event(context: ContextWrapper[AstrAgentContext]) -> Any:
+    agent_context = getattr(context, "context", None)
+    return getattr(agent_context, "event", None)
+
+
+def _get_event_group_id(event: Any) -> Optional[str]:
+    message_obj = getattr(event, "message_obj", None)
+    group_id = getattr(message_obj, "group_id", None)
+    if group_id is None:
+        group_id = getattr(event, "group_id", None)
+    if group_id is None:
+        return None
+    return str(group_id)
+
+
+@dataclass
+class PendingHistoryTool(FunctionTool[AstrAgentContext]):
+    forwarder: Any = Field(default=None, exclude=True)
+    name: str = "qq_forwarder_pending_history"
+    description: str = "获取当前群还有多少条史没有搬运。"
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        event = _get_tool_event(context)
+        group_id = _get_event_group_id(event)
+        if group_id is None:
+            return "当前会话不是群聊，无法确定要查询哪个群的史。"
+
+        count = await self.forwarder.get_pending_history_count(group_id)
+        return f"当前群还有 {count} 条史没有搬运。"
+
+
+@dataclass
+class ForwardHistoryTool(FunctionTool[AstrAgentContext]):
+    forwarder: Any = Field(default=None, exclude=True)
+    name: str = "qq_forwarder_forward_history"
+    description: str = "搬运当前群还没有搬运的史。"
+    parameters: dict = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        event = _get_tool_event(context)
+        group_id = _get_event_group_id(event)
+        if group_id is None:
+            return "当前会话不是群聊，无法确定要搬运到哪个群。"
+        if not isinstance(event, AiocqhttpMessageEvent):
+            return "当前平台不是 AIOCQHTTP，无法使用 QQ 群单条消息转发接口搬史。"
+
+        return await self.forwarder.forward_history_for_event(event, group_id)
 
 
 @register("qq_forwarder", "water2027", "QQ转发插件", "0.1.0")
@@ -55,6 +126,10 @@ class QqForwarder(Star):
         self._forward_lock = asyncio.Lock()
         self._scheduler_task: Optional[asyncio.Task] = None
         self._bot_client = None  # 供定时任务使用
+        self.context.add_llm_tools(
+            PendingHistoryTool(forwarder=self),
+            ForwardHistoryTool(forwarder=self),
+        )
 
     # ------------------------------------------------------------------ #
     #  调度器
@@ -142,11 +217,11 @@ class QqForwarder(Star):
     @filter.command("来搬")
     async def manual_forward(self, event: AstrMessageEvent):
         if self._forward_lock.locked():
-            yield event.plain_result("别急, 在般了")
+            yield event.plain_result("别急, 在搬了")
             return
 
         self.use_bot(event)
-        target_group_id = event.message_obj.group_id
+        target_group_id = str(event.message_obj.group_id)
         task = asyncio.create_task(self._run_forward(targets=[target_group_id]))
         task.add_done_callback(
             lambda t: (
@@ -161,15 +236,51 @@ class QqForwarder(Star):
     #  转发核心逻辑
     # ------------------------------------------------------------------ #
 
-    async def _run_forward(self, targets: list[str] = []):
+    async def get_pending_history_count(self, group_id: str) -> int:
+        cursor = await self._store.get_cursor(group_id)
+        pending = await self._store.get_pending(group_id, cursor)
+        return len(pending)
+
+    async def forward_history_for_event(
+        self, event: AiocqhttpMessageEvent, group_id: str
+    ) -> str:
+        if self._forward_lock.locked():
+            return "别急，在搬了。"
+
+        self.use_bot(event)
+        result = await self._run_forward(targets=[group_id])
+        group_result = result["groups"].get(group_id)
+        if result.get("error") == "no_bot":
+            return "尚无可用 bot 客户端，无法搬史。"
+        if not group_result:
+            return "没有找到当前群的搬运结果。"
+
+        pending = group_result["pending"]
+        forwarded = group_result["forwarded"]
+        skipped = group_result["skipped"]
+        failed = group_result["failed"]
+
+        if pending == 0:
+            return "当前群没有需要搬运的史。"
+        if failed:
+            return (
+                f"搬史中断：原本有 {pending} 条，已搬 {forwarded} 条，"
+                f"跳过 {skipped} 条，失败 {failed} 条。"
+            )
+        return f"搬史完成：原本有 {pending} 条，已搬 {forwarded} 条，跳过 {skipped} 条。"
+
+    async def _run_forward(self, targets: Optional[list[str]] = None) -> dict:
         """执行一次完整的转发流程（加锁，防止并发）。
 
         targets: 目标群列表。
         """
+        targets = targets or []
+        result = {"groups": {}, "error": None}
         async with self._forward_lock:
             if self._bot_client is None:
                 logger.warning("[QqForwarder] 尚无可用 bot 客户端，跳过转发")
-                return
+                result["error"] = "no_bot"
+                return result
 
             # 记录每个目标群本次成功转发到的最后一条消息ID
             group_last_forwarded: dict = {}
@@ -179,19 +290,29 @@ class QqForwarder(Star):
                 pending = await self._store.get_pending(group_id, cursor)
 
                 if not pending:
-                    logger.info(f"[QqForwarder] 源群 {group_id} 无待转发消息")
+                    result["groups"][group_id] = {
+                        "pending": 0,
+                        "forwarded": 0,
+                        "skipped": 0,
+                        "failed": 0,
+                    }
+                    logger.info(f"[QqForwarder] 目标群 {group_id} 无待转发消息")
                     continue
 
                 logger.info(
-                    f"[QqForwarder] 源群 {group_id} 待转发 {len(pending)} 条，游标={cursor}"
+                    f"[QqForwarder] 目标群 {group_id} 待转发 {len(pending)} 条，游标={cursor}"
                 )
 
                 last_forwarded: Optional[int] = None
+                forwarded = 0
+                skipped = 0
+                failed = 0
                 for msg_id in pending:
                     if not await self._pre_forward_executor.evaluate(
                         self._bot_client, msg_id
                     ):
                         logger.info(f"[QqForwarder] 消息 {msg_id} 未通过规则检查，跳过")
+                        skipped += 1
                         continue
 
                     all_success = True
@@ -204,11 +325,13 @@ class QqForwarder(Star):
                         logger.info(
                             f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 成功"
                         )
+                        forwarded += 1
                     except ActionFailed as e:
                         logger.error(
                             f"[QqForwarder] 消息 {msg_id} -> 群 {group_id} 失败: {e}"
                         )
                         all_success = False
+                        failed += 1
 
                     if not all_success:
                         logger.warning(
@@ -225,9 +348,16 @@ class QqForwarder(Star):
                         f"[QqForwarder] 目标群 {group_id} 游标更新至 {last_forwarded}"
                     )
 
+                result["groups"][group_id] = {
+                    "pending": len(pending),
+                    "forwarded": forwarded,
+                    "skipped": skipped,
+                    "failed": failed,
+                }
+
             # 清理所有目标群都已转发过的消息
             # 只有全部目标群都有游标时才清理，取位置最靠前的游标作为清理边界
-            if group_last_forwarded:
+            if group_last_forwarded and self.target_group:
                 all_cursors = []
                 for group_id in self.target_group:
                     c = await self._store.get_cursor(group_id)
@@ -243,6 +373,8 @@ class QqForwarder(Star):
                         )
                         await self._store.remove_messages_up_to(min_cursor)
                         logger.info(f"[QqForwarder] 缓存清理至游标 {min_cursor}")
+
+        return result
 
     def use_bot(self, event: AstrMessageEvent):
         assert isinstance(event, AiocqhttpMessageEvent)
